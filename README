@@ -1,0 +1,5 @@
+# esxsnmp-tsdb: simple timeseries database
+
+This simple timeseries database was written for the original version of
+ESxSNMP. It is still used by our legacy ESxSNMP instances. esxsnmp-tsdb is not
+recommended for new installations as it is unmaintained.
