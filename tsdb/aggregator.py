@@ -198,7 +198,7 @@ class Aggregator(object):
                 if not missed_slots:
                     missed_slots = [curr_slot]
                 missed = delta_v - (curr_frac + prev_frac)
-                if missed > 0:
+                if missed > len(missed_slots):
                     missed_frac = missed / len(missed_slots)
                     missed_rem = missed % (missed_frac * len(missed_slots))
                     for slot in missed_slots:
