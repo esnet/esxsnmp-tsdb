@@ -158,3 +158,67 @@ def test_select_inclusive_begin():
     print l
     assert len(l) == 1
     assert l[0].timestamp == 0
+
+
+@with_setup(db_reset, db_reset)
+def test_bad_aggregation1():
+    """Test for overly large values in aggregates after a period of missing data.
+
+    There was a period of missing values in the raw counter variable,
+    once data resumed there was large spike.  this is actual counter data
+    from:
+
+    star-cr5/ALUSAPPoll/sapBaseStatsIngressQchipForwardedInProfOctets/6012-2_2_1-3506
+
+    for the timerange:
+
+    1454514846i (2016-02-03 09:54:06)
+    1454516436 (2016-02-03 10:20:36)
+
+    the SAP collection doesn't include sysUpTime and so we don't use uptime in
+    this test.
+
+    The solution is to just invalidate the first row after a gap.
+    """
+
+    db = TSDB.create(TESTDB)
+    var = db.add_var("test1", Counter64, 30, YYYYMMDDChunkMapper)
+    agg = var.add_aggregate("30s", YYYYMMDDChunkMapper, ['average', 'delta'])
+
+    bad_data = []
+    def callback(ancestor, agg, rate, prev, curr):
+        bad_data.append(rate)
+
+    def update(var, ts, flags, value, update_agg=True):
+        counter = Counter64(ts, flags, value)
+        var.insert(counter)
+        var.flush()
+
+        if update_agg:
+            # if ts > 1454516405:
+            #     import pdb
+            #     pdb.set_trace()
+
+            min_last_update = ts - (30*40)
+            var.update_aggregate("30",
+                                 uptime_var=None,
+                                 min_last_update=min_last_update,
+                                 max_rate=int(110e9),
+                                 max_rate_callback=callback)
+
+    update(var, 1454514785, ROW_VALID, 63615634280445, update_agg=False)
+    update(var, 1454514815, ROW_VALID, 63615634282858)
+    update(var, 1454514846, ROW_VALID, 63615634284139)
+    update(var, 1454514877, ROW_VALID, 63615634286704)
+    update(var, 1454516405, ROW_VALID, 63615634387100)
+    update(var, 1454516436, ROW_VALID, 63615634388440)
+
+    assert len(bad_data) == 0
+
+    for r in agg.select(begin=1454514815, end=1454516436):
+        if r.timestamp == 1454516400:
+            if r.average > 8.0e+09:
+                print "got incorrect value after gap", r
+                assert r.average > 8.0e+09
+        if r.timestamp > 1454516400:
+            assert (r.average - 8.66667) < 0.1

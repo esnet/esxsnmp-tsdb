@@ -127,6 +127,13 @@ class Aggregator(object):
                 end=now, # limit unnecessary IO, there's no data in the future
                 flags=ROW_VALID): 
 
+            # if our previous value is not valid, then only set LAST_UPDATE
+            # and return. this avoids big spikes after periods of missing data
+            # this way we'll generate an accurate aggregate at the next timestep
+            if prev.flags != ROW_VALID:
+                self.agg.metadata['LAST_UPDATE'] = curr.timestamp
+                self.agg.flush()
+                return
 
             delta_t = curr.timestamp - prev.timestamp
             delta_v = curr.value - prev.value
