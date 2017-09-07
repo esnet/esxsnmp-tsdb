@@ -4,7 +4,7 @@ from fpconst import isNaN
 import time
 
 from tsdb.error import *
-from tsdb.row import Aggregate, ROW_VALID, ROW_TYPE_MAP
+from tsdb.row import Aggregate, ROW_VALID, ROW_TYPE_MAP, ROW_INVALID
 
 class Aggregator(object):
     """Calculate Aggregates.
@@ -25,6 +25,21 @@ class Aggregator(object):
 
         return var.type(timestamp, 0, **aggs)
 
+    def _invalidate_row(self, var, timestamp):
+        if var.type != Aggregate:
+            raise TSDBVarIsNotAggregate("not an Aggregate")
+
+        try:
+            row = var.get(timestamp)
+        except (TSDBVarEmpty, TSDBVarRangeError):
+            row = self._empty_row(var, timestamp)
+
+        row.flags |= ROW_INVALID
+        if row.flags & ROW_VALID:
+            row.flags ^= ROW_VALID
+
+        var.insert(row)
+
     def _increase_delta(self, var, timestamp, value):
         if var.type != Aggregate:
             raise TSDBVarIsNotAggregate("not an Aggregate")
@@ -34,9 +49,10 @@ class Aggregator(object):
         except (TSDBVarEmpty, TSDBVarRangeError):
             row = self._empty_row(var, timestamp)
 
-        row.delta += value
-        row.flags |= ROW_VALID
-        var.insert(row)
+        if not row.flags & ROW_INVALID:
+            row.delta += value
+            row.flags |= ROW_VALID
+            var.insert(row)
 
     def update(self, uptime_var=None, min_last_update=None, max_rate=None,
             max_rate_callback=None):
@@ -106,7 +122,6 @@ class Aggregator(object):
                 |                   |
                 |<---- delta_t ---->|
         """
-
         step = self.agg.metadata['STEP']
         assert self.ancestor.metadata['STEP'] == step
 
@@ -118,14 +133,14 @@ class Aggregator(object):
         if min_ts > last_update:
             last_update = min_ts
             self.agg.metadata['LAST_UPDATE'] = last_update
-       
+
         prev = self.ancestor.get(last_update)
         now = int(time.time())
 
         # XXX this only works for Counter types right now
         for curr in self.ancestor.select(begin=last_update+step,
                 end=now, # limit unnecessary IO, there's no data in the future
-                flags=ROW_VALID): 
+                flags=ROW_VALID):
 
             # if our previous value is not valid, then only set LAST_UPDATE
             # and return. this avoids big spikes after periods of missing data
@@ -140,25 +155,16 @@ class Aggregator(object):
             prev_slot = (prev.timestamp / step) * step
             curr_slot = (curr.timestamp / step) * step
 
-            # tests for edge cases: rollover, invalid, large gaps in data
-            # not sure how to properly invalidate individual rows
-
-            if self.ancestor.type.can_rollover and delta_v < 0:
-                if uptime_var is not None:
-                    try:
-                        delta_uptime = uptime_var.get(curr.timestamp).value - \
-                            uptime_var.get(prev.timestamp).value
-                        if delta_uptime < 0:
-                            # this is a reset
-                            delta_v = curr.value
-                        else:
-                            delta_v = self.ancestor.type.rollover(delta_v)
-                    except TSDBVarRangeError:
-                        # uptime var no help, assume reset
-                        delta_v = curr.value
-                else:
-                    # no uptime var, assume reset
-                    delta_v = curr.value
+            # trying to detect rollovers was buggy in practice, so instead
+            # we just invalidate rows where the counter decreases. We also
+            # invalidate rows on each side of the decreasing measurement as
+            # the partial updates are misleading
+            if delta_v < 0:
+                # the partial updates to the aggregate can be misleading/confusing
+                self._invalidate_row(self.agg, prev_slot)
+                self._invalidate_row(self.agg, curr_slot)
+                prev = curr # so LAST_UPDATE is updated
+                continue
 
             rate = float(delta_v) / float(delta_t)
 
@@ -265,10 +271,10 @@ class Aggregator(object):
                 if datum.flags & ROW_VALID:
                     valid += 1
                     row.delta += datum.delta
-    
+
                     if isNaN(row.min) or datum.delta < row.min:
                         row.min = datum.delta
-    
+
                     if isNaN(row.max) or datum.delta > row.max:
                         row.max = datum.delta
             row.average = row.delta / float(step)
@@ -280,7 +286,7 @@ class Aggregator(object):
             self.agg.insert(row)
 
             work = list(itertools.islice(data, 0, steps_needed))
-       
+
         if slot is not None:
             self.agg.metadata['LAST_UPDATE'] = slot
             self.agg.flush()

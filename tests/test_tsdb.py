@@ -518,51 +518,44 @@ class TestTSDBRows(unittest.TestCase):
         print agg1
         assert agg0 == agg1
 
-class TestNonDecreasing(TSDBTestCase):
-    def testReset(self):
+class TestDecreasingCounter(TSDBTestCase):
+    def testDecreasingCounter(self):
+        """Don't update aggregates when a counter decreases.
+
+        We used to try to detect rollovers and resets but this proved hard to
+        get right in practice. Better to just have a missing data point.
+        """
         for rtype in (Counter32, Counter64):
             varname = "test_%s" % (rtype.__name__)
+            print varname
             t = self.db.add_var(varname, rtype, 60, YYYYMMDDChunkMapper)
-            t.insert(rtype(1, ROW_VALID, 100))
-            t.insert(rtype(61, ROW_VALID, 62))
+            t.insert(rtype(30, ROW_VALID, 1000))
+            t.insert(rtype(90, ROW_VALID, 1060))
+            t.insert(rtype(150, ROW_VALID, 1120))
+            t.insert(rtype(210, ROW_VALID, 120))
+            t.insert(rtype(270, ROW_VALID, 180))
+            t.insert(rtype(330, ROW_VALID, 240))
             t.flush()
-
-            u = self.db.add_var(varname + "_uptime", TimeTicks, 60,
-                    YYYYMMDDChunkMapper)
-            u.insert(TimeTicks(1, ROW_VALID, 100))
-            u.insert(TimeTicks(61, ROW_VALID, 1))
 
             t.add_aggregate("60s", YYYYMMDDChunkMapper, ['average','delta'], metadata=dict(HEARTBEAT=120))
-            t.update_all_aggregates(uptime_var=u)
+            t.update_all_aggregates(uptime_var=None)
+
             a = t.get_aggregate('60s')
-            print a.metadata
-            print a.get(1).delta
+            for row in a.select(begin=0, end=360, flags=0):
+                print row
 
-            assert a.get(1).delta == 60
+            #import pdb; pdb.set_trace();
 
-    def testRollover(self):
-        for rtype, maxval in (
-                (Counter32, 4294963596),
-                (Counter64, 18446744073709547916)):
-            varname = "test_%s" % (rtype.__name__)
-            t = self.db.add_var(varname, rtype, 60, YYYYMMDDChunkMapper)
-            t.insert(rtype(0, ROW_VALID, maxval))
-            t.insert(rtype(60, ROW_VALID, 37))
-            t.flush()
-            print t
-
-            u = self.db.add_var(varname + "_uptime", TimeTicks, 60,
-                    YYYYMMDDChunkMapper)
-            u.insert(TimeTicks(0, ROW_VALID, 100))
-            u.insert(TimeTicks(60, ROW_VALID, 6100))
-            print u
-
-            t.add_aggregate("60s", YYYYMMDDChunkMapper, ['average','delta'],
-                    metadata=dict(HEARTBEAT=120))
-            t.update_all_aggregates(uptime_var=u)
-            a = t.get_aggregate('60s')
-            print a.get(1).delta
-            assert a.get(1).delta == 3737
+            assert a.get(0).delta == 30.0
+            assert a.get(0).average == 0.5
+            assert a.get(60).delta == 60.0
+            assert a.get(60).average == 1.0
+            # invalidated rows due to decreasing counter
+            assert a.get(120).flags & ROW_INVALID
+            assert a.get(180).flags & ROW_INVALID
+            # first complete period after reset
+            assert a.get(240).delta == 60.0
+            assert a.get(240).average == 1.0
 
 
     def tearDown(self):

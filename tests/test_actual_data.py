@@ -5,7 +5,7 @@ import os
 from nose import with_setup
 
 from tsdb import *
-from tsdb.row import Counter64, TimeTicks
+from tsdb.row import Counter64, TimeTicks, ROW_INVALID
 from tsdb.chunk_mapper import YYYYMMDDChunkMapper
 
 TESTDB = os.path.join(os.environ.get('TMPDIR', 'tmp'), 'actual_testdb')
@@ -71,7 +71,7 @@ def test_erroneous_data2():
             max_rate_callback=callback)
 
     print bad_data
-    assert bad_data[0] > int(11*1e9)
+    assert len(bad_data) == 0
 
 @with_setup(db_reset, db_reset)
 def test_gaps1():
@@ -222,3 +222,58 @@ def test_bad_aggregation1():
                 assert r.average > 8.0e+09
         if r.timestamp > 1454516400:
             assert (r.average - 8.66667) < 0.1
+
+
+@with_setup(db_reset, db_reset)
+def test_bad_aggregation2():
+    """Aggregations are incorrect with decreasing counters with an invalid data point in the middle.
+
+    https://github.com/esnet/esxsnmp-tsdb/issues/2"""
+    db = TSDB.create(TESTDB)
+    var = db.add_var("test1", Counter64, 30, YYYYMMDDChunkMapper)
+    agg = var.add_aggregate("30s", YYYYMMDDChunkMapper, ['average', 'delta'])
+
+    bad_data = []
+    def callback(ancestor, agg, rate, prev, curr):
+        bad_data.append(rate)
+
+    def update(var, ts, flags, value, update_agg=True):
+        counter = Counter64(ts, flags, value)
+        var.insert(counter)
+        var.flush()
+
+        if update_agg:
+            # if ts > 1454516405:
+            #     import pdb
+            #     pdb.set_trace()
+
+            min_last_update = ts - (30*40)
+            #if ts == 1501635268:
+            #    import pdb; pdb.set_trace()
+
+            var.update_aggregate("30",
+                                 uptime_var=None,
+                                 min_last_update=min_last_update,
+                                 max_rate=int(110e9),
+                                 max_rate_callback=callback)
+
+    update(var, 1501635150, ROW_VALID, 300290824551, update_agg=False)
+    update(var, 1501635180, ROW_VALID, 300290824919)
+    update(var, 1501635210, ROW_VALID, 300290825047)
+    update(var, 1501635268, 0x0, 0)
+    update(var, 1501635270, ROW_VALID, 300290814799)
+    update(var, 1501635305, ROW_VALID, 300290815063)
+
+    assert len(bad_data) == 0
+    for row in agg.select(begin=1501635150, end=1501635305):
+        print row
+
+    bad1 = agg.get(1501635210)
+    assert not bad1.flags & ROW_VALID
+    assert bad1.flags & ROW_INVALID
+
+    bad2 = agg.get(1501635270)
+    assert not bad2.flags & ROW_VALID
+    assert bad2.flags & ROW_INVALID
+
+

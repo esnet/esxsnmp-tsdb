@@ -9,6 +9,7 @@ import struct
 ROW_VALID   = 0x0001  # does this row have valid data?
 ROW_WRAP    = 0x0002  # was there a wrap between this entry and the previous
 ROW_UNWRAP  = 0x0004  # the wrap for this entry was corrected
+ROW_INVALID = 0x0008  # this row should never be made valid
 
 class TSDBRow(object):
     """A TSDBRow represents a datapoint inside a TSDBVar.
