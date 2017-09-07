@@ -64,14 +64,14 @@ def test_erroneous_data2():
     up.insert(TimeTicks(1204345937, ROW_VALID, 677747340))
 
     bad_data = []
-    def callback(ancestor, agg, rate, prev, curr):
-        bad_data.append(rate)
+    def callback(message):
+        bad_data.append(message)
 
     var.update_all_aggregates(uptime_var=up, max_rate=int(11*1e9),
-            max_rate_callback=callback)
+            error_callback=callback)
 
     print bad_data
-    assert len(bad_data) == 0
+    assert len(bad_data) == 1
 
 @with_setup(db_reset, db_reset)
 def test_gaps1():
@@ -204,7 +204,7 @@ def test_bad_aggregation1():
                                  uptime_var=None,
                                  min_last_update=min_last_update,
                                  max_rate=int(110e9),
-                                 max_rate_callback=callback)
+                                 error_callback=callback)
 
     update(var, 1454514785, ROW_VALID, 63615634280445, update_agg=False)
     update(var, 1454514815, ROW_VALID, 63615634282858)
@@ -234,8 +234,8 @@ def test_bad_aggregation2():
     agg = var.add_aggregate("30s", YYYYMMDDChunkMapper, ['average', 'delta'])
 
     bad_data = []
-    def callback(ancestor, agg, rate, prev, curr):
-        bad_data.append(rate)
+    def callback(message):
+        bad_data.append(message)
 
     def update(var, ts, flags, value, update_agg=True):
         counter = Counter64(ts, flags, value)
@@ -255,7 +255,7 @@ def test_bad_aggregation2():
                                  uptime_var=None,
                                  min_last_update=min_last_update,
                                  max_rate=int(110e9),
-                                 max_rate_callback=callback)
+                                 error_callback=callback)
 
     update(var, 1501635150, ROW_VALID, 300290824551, update_agg=False)
     update(var, 1501635180, ROW_VALID, 300290824919)
@@ -264,7 +264,8 @@ def test_bad_aggregation2():
     update(var, 1501635270, ROW_VALID, 300290814799)
     update(var, 1501635305, ROW_VALID, 300290815063)
 
-    assert len(bad_data) == 0
+    assert len(bad_data) == 1
+    print bad_data
     for row in agg.select(begin=1501635150, end=1501635305):
         print row
 

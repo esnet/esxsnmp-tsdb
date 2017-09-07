@@ -430,14 +430,14 @@ class TSDBVar(TSDBBase):
             return self
 
     def update_aggregate(self, name, uptime_var=None, min_last_update=0,
-            max_rate=None, max_rate_callback=None):
+            max_rate=None, error_callback=None):
         """Update the named aggreagate."""
         return Aggregator(self.get_aggregate(name),
                           self._get_aggregate_ancestor(name)
                          ).update(uptime_var=uptime_var,
                                   min_last_update=int(min_last_update),
                                   max_rate=max_rate,
-                                  max_rate_callback=max_rate_callback)
+                                  error_callback=error_callback)
 
     def update_all_aggregates(self, **kwargs):
         """Update all aggregates for this TSDBVar."""

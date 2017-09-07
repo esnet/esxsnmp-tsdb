@@ -470,6 +470,65 @@ class AggregatorSmokeTest(TSDBTestCase):
         var.insert(Counter32(25*3600, ROW_VALID, 3600*5*25))
         var.update_all_aggregates()
 
+    def testMaxRateCallback(self):
+        var = self.db.add_var("maxratetest", Counter64, 30, YYYYMMDDChunkMapper)
+        agg = var.add_aggregate("30s", YYYYMMDDChunkMapper, ['average', 'delta'])
+
+        bad_data = []
+        def callback(message):
+            bad_data.append(message)
+
+        def update(var, ts, flags, value, update_agg=True):
+            counter = Counter64(ts, flags, value)
+            var.insert(counter)
+            var.flush()
+
+            if update_agg:
+                min_last_update = ts - (30*40)
+                var.update_aggregate("30",
+                                 uptime_var=None,
+                                 min_last_update=min_last_update,
+                                 max_rate=10,
+                                 error_callback=callback)
+
+        update(var, 0, ROW_VALID, 0, update_agg=False)
+        update(var, 30, ROW_VALID, 1000)
+
+        print bad_data
+        assert len(bad_data) == 1
+        assert "rate too high" in bad_data[0]
+        assert "/maxratetest" in bad_data[0]
+
+    def testDecreasingCounterCallback(self):
+        var = self.db.add_var("decreasingtest", Counter64, 30, YYYYMMDDChunkMapper)
+        agg = var.add_aggregate("30s", YYYYMMDDChunkMapper, ['average', 'delta'])
+
+        bad_data = []
+        def callback(message):
+            bad_data.append(message)
+
+        def update(var, ts, flags, value, update_agg=True):
+            counter = Counter64(ts, flags, value)
+            var.insert(counter)
+            var.flush()
+
+            if update_agg:
+                min_last_update = ts - (30*40)
+                var.update_aggregate("30",
+                                 uptime_var=None,
+                                 min_last_update=min_last_update,
+                                 max_rate=10,
+                                 error_callback=callback)
+
+        update(var, 0, ROW_VALID, 10000, update_agg=False)
+        update(var, 30, ROW_VALID, 1000)
+
+        print bad_data
+        assert len(bad_data) == 1
+        assert "counter decreased" in bad_data[0]
+        assert "/decreasingtest" in bad_data[0]
+
+
     def tearDown(self):
         os.system("rm -rf %s.agg" % (TESTDB))
         os.system("mv %s %s.agg" % (TESTDB, TESTDB))

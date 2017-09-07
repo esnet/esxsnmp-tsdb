@@ -55,7 +55,7 @@ class Aggregator(object):
             var.insert(row)
 
     def update(self, uptime_var=None, min_last_update=None, max_rate=None,
-            max_rate_callback=None):
+            error_callback=None):
         """Update an aggregate.
 
         ``uptime_var``
@@ -66,37 +66,29 @@ class Aggregator(object):
             `min_last_update`.
         ``max_rate``
             if rate > max_rate then the row in the computed aggregate is set
-            to invalid.  if ``max_rate_callback`` is not None then
-            ``max_rate_callback`` to notify the upper level application of
+            to invalid.  if ``error_callback`` is not None then
+            ``error_callback`` to notify the upper level application of
             potentially bad data. 
-        ``max_rate_callback``
-            a function that takes five arguments:
-                ``ancestor``
-                    a TSDBVar which is the ancestor of the aggregate being computed
-                ``agg``
-                    a TSDBVar which is the aggregate being computed
-                ``rate``
-                    the computed rate
-                ``prev``
-                    the earlier data point
-                ``curr``
-                    the current data point
+        ``error_callback``
+            a function that takes single argument:
+                ``message``
+                    a string describing what went wrong
         """
 
         try:
             if self.ancestor.type == Aggregate:
                 self.update_from_aggregate(min_last_update=min_last_update,
-                        max_rate=max_rate, max_rate_callback=max_rate_callback)
+                        max_rate=max_rate, error_callback=error_callback)
             else:
                 self.update_from_raw_data(uptime_var=uptime_var,
                         min_last_update=min_last_update, max_rate=max_rate,
-                        max_rate_callback=max_rate_callback)
+                        error_callback=error_callback)
         except TSDBVarEmpty:
             # not enough data to build aggregate
             pass
 
     def update_from_raw_data(self, uptime_var=None, min_last_update=None,
-            max_rate=None, max_rate_callback=None):
+            max_rate=None, error_callback=None):
         """Update this aggregate from raw data.
 
         The first aggregate MUST have the same step as the raw data.  (This
@@ -163,14 +155,22 @@ class Aggregator(object):
                 # the partial updates to the aggregate can be misleading/confusing
                 self._invalidate_row(self.agg, prev_slot)
                 self._invalidate_row(self.agg, curr_slot)
+                if error_callback:
+                    error_callback("counter decreased: %s between %d %d: %d > %d" % (
+                        self.ancestor.path,
+                        prev.timestamp,
+                        curr.timestamp,
+                        prev.value,
+                        curr.value))
                 prev = curr # so LAST_UPDATE is updated
                 continue
 
             rate = float(delta_v) / float(delta_t)
 
             if max_rate and rate > max_rate:
-                if max_rate_callback:
-                    max_rate_callback(self.ancestor, self.agg, rate, prev, curr)
+                if error_callback:
+                    error_callback("rate too high for %s at %d: %f" % (self.ancestor.path,
+                                                                       curr.timestamp, rate))
 
                 prev = curr
                 continue
@@ -235,7 +235,7 @@ class Aggregator(object):
         self.agg.flush()
 
     def update_from_aggregate(self, min_last_update=None, max_rate=None,
-            max_rate_callback=None):
+            error_callback=None):
         """Update this aggregate from another aggregate."""
         # LAST_UPDATE points to the last step updated
 
